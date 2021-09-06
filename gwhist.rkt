@@ -76,6 +76,7 @@ version
                  (and (> b-value 1)
                       (> a-value b-value)))))))
 
+;; Can the card led beat the followed card?
 (define (beats? lead follow trump-suit)
   (let ((lead-suit    (send lead get-suit))
         (lead-value   (send lead get-value))
@@ -91,37 +92,50 @@ version
   (let* ((turn (dict-ref state 'turn))
          (card-led (dict-ref state 'card-led))
          (hand (dict-ref-in state `(,turn cards))))
+    ;; Cards that can be legally played
     (define playables
-      (cond (card-led
-             (define followers
-               (filter
-                (λ (card)
-                  (= (send card get-suit-id)
-                     (send card-led get-suit-id)))
-                hand))
-             (if (null? followers)
-                 hand
-                 followers))
-            (else
-             hand)))
+      (if (not card-led)
+          hand
+          (let ((followers
+                 (filter
+                  (λ (card)
+                    (= (send card get-suit-id)
+                       (send card-led get-suit-id)))
+                  hand)))
+            (if (null? followers)
+                hand
+                followers))))
     (case turn
       ((player)
-       (define player-region (dict-ref-in state '(player region)))
        (define selection (box #f))
        (define sema (make-semaphore))
+       ;; Dim unplayable cards.
        (for-each (λ (c) (send c dim #f)) playables)
+       ;; Register a click action.
        (send table set-single-click-action
              (λ (c)
                (send table pause 0.1)
+               ;; Only works for playable cards.
                (when (member c playables)
+                 ;; Unregister the click action.
                  (send table set-single-click-action void)
                  (set-box! selection c)
                  (semaphore-post sema))))
+       ;; Wait until the player clicks on a card.
        (yield sema)
        (unbox selection))
       (else
+       (define trump-suit (dict-ref state 'trump))
        (sleep/yield 0.1)
-       (list-random-ref playables)))))
+       (cond
+         (card-led
+          ;; Try to head the trick if you can.
+          (define beaters (filter (λ (card) (beats? card-led card trump-suit)) playables))
+          ;; Play the lowest card you can play.
+          (car (sort (if (null? beaters) playables beaters) (negate card>?))))
+         (else
+          ;; Lead a random card. (TODO)
+          (list-random-ref playables)))))))
 
 ;;;; Region and hand definitions
 
@@ -166,7 +180,7 @@ version
     (set-single-click-action void)
     (set-double-click-action void)
     (set-button-action 'left 'drag-raise/one)
-    ;; Trump suit indicator
+    ;; Trump suit indicator text
     (add-region (region 0 (* ch 3) cw 20 (symbol->string (dict-ref state 'trump)) #f))
     ;; The talon on the side
     (add-region talon-region)
@@ -190,7 +204,9 @@ version
 (define (sort-cards! state)
   (define player-hand (sort (dict-ref-in state '(player cards)) (negate card>?)))
   (define opponent-hand (dict-ref-in state '(opponent cards)))
+  ;; Undim all cards.
   (for-each (λ (c) (send c dim #f)) (send table all-cards))
+  ;; Now dim all the cards in the player's hand.
   (for-each (λ (c) (send c dim #t)) player-hand)
   (send table move-cards-to-region player-hand (dict-ref-in state '(player region)))
   (send table stack-cards player-hand)
@@ -326,19 +342,25 @@ version
                  (dict-set 'turn winner))))
 
 (define (end state)
-  (send table set-status
-        (apply format "Game over! Player pile: ~A cards | Opponent pile: ~A cards"
-               (map (λ (player)
-                      (length (dict-ref-in state `(,player tricks))))
-                    '(player opponent))))
-  (sleep/yield 10)
+  (send table set-status "Game over!")
+  (message-box
+   "Game Over!"
+   (apply format "Player score: ~A\nOpponent score: ~A"
+          (map (λ (player)
+                 (/ (length (dict-ref-in state `(,player tricks))) 2))
+               '(player opponent)))
+   table '(ok no-icon))
   (quit!))
 
 (define (game-loop state)
+  (define talon-count (length (dict-ref-in state '(talon cards))))
+  (define talon-string (if (zero? talon-count)
+                           "Talon depleted."
+                           (format "~A cards in the talon." talon-count)))
   (send table set-status
-        (format "It's ~A's turn. | Remaining cards: ~A"
+        (format "It's ~A's turn. | ~A"
                 (dict-ref state 'turn)
-                (length (dict-ref-in state '(talon cards)))))
+                talon-string))
   (sort-cards! state)
   (case (dict-ref state 'phase)
     ;; First stage
