@@ -7,8 +7,6 @@
 
 (current-curly-dict hasheq)
 
-;;;; Preliminary stuff
-
 (define game-name "German Whist")
 (define game-version "1.0")
 (define version-message
@@ -39,7 +37,6 @@ version
   (custodian-shutdown-all (current-custodian))
   (queue-callback exit #t))
 
-;; TODO
 (define (about)
   (message-box
    (format "About ~A v~A" game-name game-version)

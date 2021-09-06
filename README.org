@@ -2,3 +2,6 @@
   An implementation of the card game German whist in Racket.
 
   =% racket gwhist.rkt= to run.
+
+** TODO
+   Add proper AI logic
